@@ -10,6 +10,29 @@ DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://neondb_owner:npg_eDJ9A0uv
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 
+
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# --- MINI SERVIDOR HTTP PARA HEALTH CHECK DE RENDER ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot Criostato Online")
+
+    def log_message(self, format, *args):
+        return  # Silencia los logs de peticiones HTTP en consola
+
+def iniciar_servidor_web():
+    port = int(os.getenv("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    server.serve_forever()
+
+# Iniciamos el servidor HTTP en un hilo secundario
+hilo_web = threading.Thread(target=iniciar_servidor_web, daemon=True)
+hilo_web.start()
+
+
 ESTADO_MONITOREO = "calentar"
 CHAT_ID = None
 UMBRAL_QUENCH_MK = 1500.0
