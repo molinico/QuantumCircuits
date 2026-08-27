@@ -40,45 +40,44 @@ def vigilancia_criostato():
                 ahora = datetime.now(tz_ar)
                 diferencia_seg = (ahora - fecha.replace(tzinfo=tz_ar)).total_seconds()
                 
-                # 1. Detección de Caída / Pérdida de Comunicación
+                # 1. Detección de Caída de Comunicación (ALERTA REPETITIVA)
                 if diferencia_seg > 180 or estado == "OFFLINE":
-                    # Ráfaga inicial al detectar la desconexión
                     if not estaba_desconectado:
                         for _ in range(3):
                             bot.send_message(
                                 CHAT_ID, 
-                                "🚨 *¡ALERTA MÁXIMA: PÉRDIDA DE COMUNICACIÓN!* 🚨\nNo hay respuesta de la PC del laboratorio (Posible corte de luz o red).", 
+                                "🚨 *¡ALERTA MÁXIMA: PÉRDIDA DE COMUNICACIÓN!* 🚨\nNo hay respuesta de la PC del laboratorio.", 
                                 parse_mode="Markdown"
                             )
                             time.sleep(2)
                         estaba_desconectado = True
                     
-                    # Si sigue desconectado y estamos en modo USO, insiste con alertas cada 2 minutos
                     elif ESTADO_MONITOREO == "uso":
                         for _ in range(3):
                             bot.send_message(
                                 CHAT_ID, 
-                                "🚨 *¡SEGUIMOS SIN COMUNICACIÓN CON EL LABORATORIO!* 🚨", 
+                                "🚨 *¡ALERTA: CONTINUAMOS SIN COMUNICACIÓN CON EL LAB!* 🚨", 
                                 parse_mode="Markdown"
                             )
                             time.sleep(2)
-                        time.sleep(120) # Pausa de 2 min antes de volver a alertar
+                        time.sleep(120)  # Reitera cada 2 minutos
                         continue
 
                     time.sleep(15)
                     continue
 
-                # 2. Detección de Reconexión
+                # 2. Reconexión
                 if estaba_desconectado:
-                    bot.send_message(CHAT_ID, "🟢 *RECONECTADO:* Se restableció la señal con la PC del laboratorio.", parse_mode="Markdown")
+                    bot.send_message(CHAT_ID, "🟢 *RECONECTADO:* Se restableció la señal con el laboratorio.", parse_mode="Markdown")
                     estaba_desconectado = False
 
-                # 3. Monitoreo de Emergencia / Enfriamiento
+                # 3. Emergencia por Temperatura
                 if ESTADO_MONITOREO == "uso" and mxc is not None and mxc > UMBRAL_QUENCH_MK:
                     for _ in range(3):
-                        bot.send_message(CHAT_ID, f"🚨 ¡EMERGENCIA CRIOSTATO! MXC a {mxc} mK 🚨")
+                        bot.send_message(CHAT_ID, f"🚨 ¡EMERGENCIA CRIOSTATO! MXC a {mxc} mK 🚨", parse_mode="Markdown")
                         time.sleep(2)
 
+                # 4. Enfriamiento
                 elif ESTADO_MONITOREO == "enfriar" and c4k is not None:
                     escalon_actual = int(c4k / 10) * 10
                     if escalon_actual < ULTIMO_ESCALON_FRIO:
@@ -91,18 +90,18 @@ def vigilancia_criostato():
 def start(message):
     global CHAT_ID
     CHAT_ID = message.chat.id
-    bot.reply_to(message, "🤖 Bot online en Render. Conectado al criostato.")
+    bot.reply_to(message, "🤖 Bot online en Render. Conectado al laboratorio.")
 
 @bot.message_handler(commands=['help', 'ayuda'])
 def mostrar_ayuda(message):
     texto = (
         "📖 *Guía de Comandos del Bot*\n\n"
-        "• **/temp** — Temperaturas de los platos y campo magnético actual.\n"
-        "• **/campo <valor>** — Setea el campo magnético (entre 0 y 7 T, ramp rate 0.25 T/min). Ej: `/campo 2.5`\n"
-        "• **/uso** — Habilita alarmas de emergencia (> 1500 mK en MXC o desconexión).\n"
-        "• **/enfriar** — Alerta cada 10 K que baja el plato 4K-FLANGE.\n"
-        "• **/calentar** — Silencia las alertas automáticas.\n"
-        "• **/start** — Vincula este chat para recibir alertas."
+        "• **/temp** — Temperaturas de los platos, estado del enlace y campo magnético actual.\n"
+        "• **/campo <valor>** — Setea el campo magnético en el rango de -7.0 T a +7.0 T (|B| ≤ 7 T) con rampa fija de 0.25 T/min. Ejemplos: `/campo 2.5` o `/campo -1.0`\n"
+        "• **/uso** — Habilita alarmas de emergencia por alta temperatura (> 1500 mK en MXC) y alertas repetitivas por corte de comunicación.\n"
+        "• **/enfriar** — Alerta progresiva cada 10 K que baja el plato 4K-FLANGE.\n"
+        "• **/calentar** — Silencia las alertas automáticas de monitoreo.\n"
+        "• **/start** — Vincula este chat para recibir avisos."
     )
     bot.reply_to(message, texto, parse_mode="Markdown")
 
@@ -139,12 +138,14 @@ def set_campo(message):
     try:
         partes = message.text.split()
         if len(partes) < 2:
-            bot.reply_to(message, "⚠️ Indicá el valor del campo en Teslas. Ejemplo: `/campo 2.5`", parse_mode="Markdown")
+            bot.reply_to(message, "⚠️ Indicá el valor del campo en Teslas. Ejemplo: `/campo 2.5` o `/campo -1.5`", parse_mode="Markdown")
             return
         
         target_b = float(partes[1])
-        if not (0.0 <= target_b <= 7.0):
-            bot.reply_to(message, "❌ El campo magnético debe estar entre **0.0 T** y **7.0 T**.")
+        
+        # Validar que el módulo del campo sea <= 7 Teslas (-7.0 <= B <= 7.0)
+        if abs(target_b) > 7.0:
+            bot.reply_to(message, "❌ El módulo del campo magnético debe ser **mínimo 0 T y máximo 7 T** (Rango permitido: `-7.0 T` a `+7.0 T`).", parse_mode="Markdown")
             return
 
         conn = psycopg2.connect(DATABASE_URL)
@@ -154,10 +155,10 @@ def set_campo(message):
         cur.close()
         conn.close()
 
-        bot.reply_to(message, f"⚙️ *Orden enviada al laboratorio:* Ajustando campo a *{target_b} T* con rampa de 0.25 T/min.", parse_mode="Markdown")
+        bot.reply_to(message, f"⚙️ *Orden registrada:* Fijando campo en *{target_b} T* (Rampa fija: 0.25 T/min).", parse_mode="Markdown")
 
     except ValueError:
-        bot.reply_to(message, "❌ Ingresá un número válido. Ejemplos: `/campo 0`, `/campo 1.5`, `/campo 7`", parse_mode="Markdown")
+        bot.reply_to(message, "❌ Valor número inválido. Ejemplo: `/campo 1.5`", parse_mode="Markdown")
     except Exception as e:
         bot.reply_to(message, f"❌ Error al registrar la orden: {e}")
 
@@ -165,7 +166,7 @@ def set_campo(message):
 def modo_uso(message):
     global ESTADO_MONITOREO
     ESTADO_MONITOREO = "uso"
-    bot.reply_to(message, "✅ Modo USO activado. Monitoreo de emergencia habilitado.")
+    bot.reply_to(message, "✅ Modo USO activado. Alarmas de emergencia y comunicación habilitadas.")
 
 @bot.message_handler(commands=['enfriar'])
 def modo_enfriar(message):
@@ -174,7 +175,7 @@ def modo_enfriar(message):
     row = obtener_datos_neon()
     if row and row[2]:
         ULTIMO_ESCALON_FRIO = int(row[2] / 10) * 10
-    bot.reply_to(message, "❄️ Modo ENFRIAMIENTO activado (guiado por 4K-FLANGE).")
+    bot.reply_to(message, "❄️ Modo ENFRIAMIENTO activado.")
 
 @bot.message_handler(commands=['calentar'])
 def modo_calentar(message):
