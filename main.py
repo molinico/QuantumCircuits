@@ -12,12 +12,11 @@ DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://neondb_owner:npg_eDJ9A0uv
 bot = telebot.TeleBot(TOKEN, threaded=False)
 
 ESTADO_MONITOREO = "uso"
-# ⚠️ REEMPLAZA ESTO POR TU NÚMERO. Ej: CHAT_ID = 123456789
+# ⚠️ REEMPLAZÁ ESTE NONE POR TU NÚMERO (Ej: CHAT_ID = 123456789)
 CHAT_ID = 2072390029  
 UMBRAL_QUENCH_MK = 1500.0
 ULTIMO_ESCALON_FRIO = 300
 
-# --- 1. SERVIDOR HTTP PARA HEALTH CHECK EN RENDER ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -28,7 +27,6 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 
 threading.Thread(target=lambda: HTTPServer(('0.0.0.0', int(os.getenv("PORT", 8080))), HealthCheckHandler).serve_forever(), daemon=True).start()
 
-# --- 2. LECTURA Y CÁLCULO DE TIEMPO BLINDADO ---
 def obtener_datos_neon():
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -44,16 +42,10 @@ def obtener_datos_neon():
 def calcular_segundos_atraso(fecha_db):
     if not fecha_db:
         return 999999
-    # Render usa UTC. Restamos 3 horas exactas para empatar con la base de datos de Argentina
     ahora_ar = datetime.utcnow() - timedelta(hours=3)
-    # Limpiamos cualquier zona horaria fantasma para hacer una resta matemática pura
     fecha_db_limpia = fecha_db.replace(tzinfo=None)
-    
-    segundos = (ahora_ar - fecha_db_limpia).total_seconds()
-    # Si por desincronización de relojes da negativo, asumimos 0
-    return max(0, segundos)
+    return max(0, (ahora_ar - fecha_db_limpia).total_seconds())
 
-# --- 3. HILO DE VIGILANCIA Y ALERTAS (CORREGIDO) ---
 def vigilancia_criostato():
     global ULTIMO_ESCALON_FRIO
     estaba_desconectado = False
@@ -66,17 +58,15 @@ def vigilancia_criostato():
                     fecha, c50k, c4k, still, mxc, estado, campo_actual, campo_target = row
                     diferencia_seg = calcular_segundos_atraso(fecha)
 
-                    # ALERTA DE CORTE (Más de 90 segundos sin datos)
                     if diferencia_seg > 90 or estado == "OFFLINE":
                         if not estaba_desconectado:
-                            bot.send_message(CHAT_ID, f"🚨 *¡PÉRDIDA DE COMUNICACIÓN!* 🚨\nHace {int(diferencia_seg)} seg que la PC no responde. Posible corte de luz o red.", parse_mode="Markdown")
+                            bot.send_message(CHAT_ID, f"🚨 *¡PÉRDIDA DE COMUNICACIÓN!* 🚨\nHace {int(diferencia_seg)} seg que la PC no responde.", parse_mode="Markdown")
                             estaba_desconectado = True
                     else:
                         if estaba_desconectado:
                             bot.send_message(CHAT_ID, "🟢 *RECONECTADO:* Señal del laboratorio restablecida.", parse_mode="Markdown")
                             estaba_desconectado = False
 
-                    # OTRAS ALERTAS
                     if ESTADO_MONITOREO == "uso" and mxc is not None and mxc > UMBRAL_QUENCH_MK:
                         bot.send_message(CHAT_ID, f"🔥 ¡EMERGENCIA CRIOSTATO! MXC subió a {mxc} mK")
 
@@ -85,20 +75,29 @@ def vigilancia_criostato():
                         if escalon_actual < ULTIMO_ESCALON_FRIO:
                             bot.send_message(CHAT_ID, f"❄️ Enfriando: 4K-FLANGE cruzó los {escalon_actual} K")
                             ULTIMO_ESCALON_FRIO = escalon_actual
-
-        except Exception as e:
-            print(f"Error en vigilancia: {e}")
-
+        except Exception:
+            pass
         time.sleep(15)
 
 threading.Thread(target=vigilancia_criostato, daemon=True).start()
 
-# --- 4. COMANDOS TELEGRAM ---
 @bot.message_handler(commands=['start'])
 def start(message):
     global CHAT_ID
     CHAT_ID = message.chat.id
-    bot.reply_to(message, f"🤖 Bot vinculado.\n⚠️ *Tu CHAT_ID es: {CHAT_ID}*\nPoné este número fijo en el código de Render para que las alertas no se borren si el servidor se reinicia.", parse_mode="Markdown")
+    bot.reply_to(message, f"🤖 Bot vinculado.\n⚠️ *Tu CHAT_ID es: {CHAT_ID}*", parse_mode="Markdown")
+
+@bot.message_handler(commands=['help', 'ayuda'])
+def mostrar_ayuda(message):
+    texto = (
+        "📖 *Guía de Comandos*\n\n"
+        "• **/temp** — Estado, temperaturas y campo magnético.\n"
+        "• **/campo <valor>** — Fijar campo (Ej: `/campo 2.5`).\n"
+        "• **/uso** — Activa alarmas por alta temperatura.\n"
+        "• **/enfriar** — Alerta progresiva al bajar la temperatura.\n"
+        "• **/calentar** — Silencia alertas automáticas."
+    )
+    bot.reply_to(message, texto, parse_mode="Markdown")
 
 @bot.message_handler(commands=['temp'])
 def reporte_temperaturas(message):
@@ -112,8 +111,7 @@ def reporte_temperaturas(message):
         dif_seg = calcular_segundos_atraso(fecha)
 
         if dif_seg > 90 or estado == "OFFLINE":
-            minutos = int(dif_seg / 60)
-            status_str = f"🔴 *SIN COMUNICACIÓN* (Hace {minutos} min / {int(dif_seg)} seg)"
+            status_str = f"🔴 *SIN COMUNICACIÓN* (Hace {int(dif_seg/60)} min)"
         else:
             status_str = "🟢 *ONLINE*"
 
@@ -122,14 +120,58 @@ def reporte_temperaturas(message):
         texto += f"• *4K-FLANGE*: {c4k if c4k is not None else 'N/I'} K\n"
         texto += f"• *STILL-FLANGE*: {still if still is not None else 'N/I'} mK\n"
         texto += f"• *MXC*: {mxc if mxc is not None else 'N/I'} mK\n\n"
-        texto += f"🧲 *Campo Magnético*: {f'{campo_actual:.3f}' if campo_actual is not None else 'N/I'} T\n"
+        texto += f"🧲 *Campo Actual*: {f'{campo_actual:.4f}' if campo_actual is not None else 'N/I'} T\n"
+        if campo_target is not None:
+            texto += f"⏳ *Enviando a*: {campo_target} T\n"
         
         bot.reply_to(message, texto, parse_mode="Markdown")
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
 
+@bot.message_handler(commands=['campo'])
+def set_campo(message):
+    try:
+        partes = message.text.split()
+        if len(partes) < 2:
+            bot.reply_to(message, "⚠️ Indicá el valor. Ejemplo: `/campo 1.5`", parse_mode="Markdown")
+            return
+        
+        target_b = float(partes[1])
+        if abs(target_b) > 7.0:
+            bot.reply_to(message, "❌ El campo debe estar entre **-7.0 T** y **+7.0 T**.", parse_mode="Markdown")
+            return
+
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute('UPDATE monitoreo_crio SET campo_target = %s WHERE id = 1', (target_b,))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        bot.reply_to(message, f"⚙️ Orden enviada: Fijar campo en *{target_b} T*.", parse_mode="Markdown")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error guardando orden: {e}")
+
+@bot.message_handler(commands=['uso'])
+def modo_uso(message):
+    global ESTADO_MONITOREO
+    ESTADO_MONITOREO = "uso"
+    bot.reply_to(message, "✅ Modo USO activado.")
+
+@bot.message_handler(commands=['enfriar'])
+def modo_enfriar(message):
+    global ESTADO_MONITOREO
+    ESTADO_MONITOREO = "enfriar"
+    bot.reply_to(message, "❄️ Modo ENFRIAR activado.")
+
+@bot.message_handler(commands=['calentar'])
+def modo_calentar(message):
+    global ESTADO_MONITOREO
+    ESTADO_MONITOREO = "calentar"
+    bot.reply_to(message, "🔥 Modo CALENTAR (Alarmas desactivadas).")
+
 while True:
     try:
         bot.infinity_polling(timeout=10, long_polling_timeout=5)
-    except Exception as e:
+    except Exception:
         time.sleep(5)
