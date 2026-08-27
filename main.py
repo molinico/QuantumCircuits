@@ -6,9 +6,8 @@ import threading
 from datetime import datetime, timezone, timedelta
 
 # Reemplazá con tu TOKEN de Telegram y tu URL de Neon
-TOKEN = '8822705364:AAFIiJ1rFs441HL3Drr08wfHSoeA2YoQYnc'
-DATABASE_URL = 'postgresql://neondb_owner:contraseña@ep-odd-cloud...neon.tech/neondb?sslmode=require'
-
+TOKEN = os.getenv('TELEGRAM_TOKEN')
+DATABASE_URL = os.getenv('DATABASE_URL')
 bot = telebot.TeleBot(TOKEN, threaded=False)
 
 ESTADO_MONITOREO = "calentar"
@@ -30,6 +29,8 @@ def obtener_datos_neon():
 
 def vigilancia_criostato():
     global ULTIMO_ESCALON_FRIO
+    estaba_desconectado = False  # Rastrea si venimos de una caída
+
     while True:
         if CHAT_ID and ESTADO_MONITOREO != "calentar":
             row = obtener_datos_neon()
@@ -37,14 +38,22 @@ def vigilancia_criostato():
                 fecha, c50k, c4k, still, mxc, estado = row
                 tz_ar = timezone(timedelta(hours=-3))
                 ahora = datetime.now(tz_ar)
+                diferencia_seg = (ahora - fecha.replace(tzinfo=tz_ar)).total_seconds()
                 
-                # Alerta si pasaron más de 3 min sin actualización o la PC local se desconectó
-                if (ahora - fecha.replace(tzinfo=tz_ar)).total_seconds() > 180 or estado == "OFFLINE":
-                    if ESTADO_MONITOREO == "uso":
-                        bot.send_message(CHAT_ID, "⚠️ *ALERTA:* Pérdida de comunicación con la PC del laboratorio.", parse_mode="Markdown")
-                        time.sleep(60)
+                # 1. Detección de Caída
+                if diferencia_seg > 180 or estado == "OFFLINE":
+                    if not estaba_desconectado:
+                        bot.send_message(CHAT_ID, "⚠️ *ALERTA:* Pérdida de comunicación con la PC del laboratorio (Posible corte de luz o red).", parse_mode="Markdown")
+                        estaba_desconectado = True
+                    time.sleep(15)
                     continue
 
+                # 2. Detección de Reconexión
+                if estaba_desconectado:
+                    bot.send_message(CHAT_ID, "🟢 *RECONECTADO:* Se restableció la señal con la PC del laboratorio. El monitoreo sigue activo.", parse_mode="Markdown")
+                    estaba_desconectado = False
+
+                # 3. Monitoreo de Emergencia / Enfriamiento
                 if ESTADO_MONITOREO == "uso" and mxc is not None and mxc > UMBRAL_QUENCH_MK:
                     for _ in range(3):
                         bot.send_message(CHAT_ID, f"🚨 ¡EMERGENCIA CRIOSTATO! MXC a {mxc} mK 🚨")
@@ -56,9 +65,9 @@ def vigilancia_criostato():
                         bot.send_message(CHAT_ID, f"❄️ Enfriando: 4K-FLANGE cruzó los {escalon_actual} K")
                         ULTIMO_ESCALON_FRIO = escalon_actual
 
-        time.sleep(15)
+        time.sleep(15)@bot.message_handler(commands=['start'])
 
-@bot.message_handler(commands=['start'])
+
 def start(message):
     global CHAT_ID
     CHAT_ID = message.chat.id
