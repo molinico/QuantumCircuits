@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 
 # Reemplazá con tu TOKEN de Telegram y tu URL de Neon
 TOKEN = '8822705364:AAFIiJ1rFs441HL3Drr08wfHSoeA2YoQYnc'
-DATABASE_URL = ''postgresql://neondb_owner:npg_eDJ9A0uvUitH@ep-restless-paper-aet1mqw8-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require''
+DATABASE_URL = 'postgresql://neondb_owner:npg_eDJ9A0uvUitH@ep-restless-paper-aet1mqw8-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
 bot = telebot.TeleBot(TOKEN, threaded=False)
 
 ESTADO_MONITOREO = "calentar"
