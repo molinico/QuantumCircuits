@@ -58,9 +58,16 @@ def vigilancia_criostato():
                     fecha, c50k, c4k, still, mxc, estado, campo_actual, campo_target = row
                     diferencia_seg = calcular_segundos_atraso(fecha)
 
-                    if diferencia_seg > 90 or estado == "OFFLINE":
+                    # Aumentado a 180 segundos (3 minutos)
+                    if diferencia_seg > 180 or estado == "OFFLINE":
                         if not estaba_desconectado:
-                            bot.send_message(CHAT_ID, f"🚨 *¡PÉRDIDA DE COMUNICACIÓN!* 🚨\nHace {int(diferencia_seg)} seg que la PC no responde.", parse_mode="Markdown")
+                            # Separar el mensaje según el motivo del error
+                            if estado == "OFFLINE":
+                                mensaje = "🚨 *¡PÉRDIDA DE COMUNICACIÓN!* 🚨\nEl sistema reportó estado OFFLINE."
+                            else:
+                                mensaje = f"🚨 *¡PÉRDIDA DE COMUNICACIÓN!* 🚨\nHace {int(diferencia_seg)} seg que la PC no responde."
+                            
+                            bot.send_message(CHAT_ID, mensaje, parse_mode="Markdown")
                             estaba_desconectado = True
                     else:
                         if estaba_desconectado:
